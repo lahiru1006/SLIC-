@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useRegisterSW } from 'virtual:pwa-register/react';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -24,6 +25,23 @@ function App() {
   const [timeStr, setTimeStr] = useState('');
   const [dateStr, setDateStr] = useState('');
   const [metrics, setMetrics] = useState(null);
+
+  // PWA Service Worker Registration & Update Hook
+  const {
+    needRefresh: [needRefresh, setNeedRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegistered(r) {
+      console.log('SW Registered:', r);
+    },
+    onRegisterError(error) {
+      console.log('SW registration error', error);
+    },
+  });
+
+  const closeUpdatePrompt = () => {
+    setNeedRefresh(false);
+  };
 
   // Live Clock
   useEffect(() => {
@@ -115,6 +133,24 @@ function App() {
     setPassword('');
     setAuthError('');
     setAuthSuccess('');
+  };
+
+  // PWA Reload Notification Component UI
+  const renderUpdateNotification = () => {
+    if (!needRefresh) return null;
+    return (
+      <div style={styles.pwaUpdateBanner}>
+        <span>A new version is available! Click reload to update.</span>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <button style={styles.pwaReloadBtn} onClick={() => updateServiceWorker(true)}>
+            Reload
+          </button>
+          <button style={styles.pwaCloseBtn} onClick={closeUpdatePrompt}>
+            Close
+          </button>
+        </div>
+      </div>
+    );
   };
 
   // --- LOGIN / REGISTER AUTHENTICATION PAGE ---
@@ -221,6 +257,9 @@ function App() {
             </form>
           )}
         </div>
+
+        {/* PWA Update Banner */}
+        {renderUpdateNotification()}
       </div>
     );
   }
@@ -302,6 +341,9 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* PWA Update Banner */}
+      {renderUpdateNotification()}
     </div>
   );
 }
@@ -363,7 +405,41 @@ const styles = {
   toggleLink: { color: '#3B8B88', fontWeight: 'bold', cursor: 'pointer', textDecoration: 'underline' },
 
   errorAlert: { backgroundColor: '#FED7D7', color: '#9B2C2C', padding: '10px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', marginBottom: '15px', textAlign: 'center' },
-  successAlert: { backgroundColor: '#C6F6D5', color: '#22543D', padding: '10px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', marginBottom: '15px', textAlign: 'center' }
+  successAlert: { backgroundColor: '#C6F6D5', color: '#22543D', padding: '10px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', marginBottom: '15px', textAlign: 'center' },
+
+  // PWA UPDATE NOTIFICATION STYLES
+  pwaUpdateBanner: {
+    position: 'fixed',
+    bottom: '20px',
+    right: '20px',
+    backgroundColor: '#1E293B',
+    color: '#FFFFFF',
+    padding: '16px',
+    borderRadius: '10px',
+    boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+    zIndex: 9999,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    fontSize: '13px'
+  },
+  pwaReloadBtn: {
+    backgroundColor: '#3B8B88',
+    color: 'white',
+    border: 'none',
+    padding: '6px 14px',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    cursor: 'pointer'
+  },
+  pwaCloseBtn: {
+    backgroundColor: 'transparent',
+    color: '#94A3B8',
+    border: '1px solid #475569',
+    padding: '6px 14px',
+    borderRadius: '6px',
+    cursor: 'pointer'
+  }
 };
 
 export default App;
