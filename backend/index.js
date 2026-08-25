@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const oracledb = require('oracledb');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(cors());
@@ -44,6 +45,7 @@ app.post('/api/register', async (req, res) => {
   try {
     connection = await oracledb.getConnection(dbConfig);
 
+    // Username හෝ EPF එක දැනටමත් පවතීදැයි පරීක්ෂා කිරීම
     const checkUser = await connection.execute(
       `SELECT USERNAME FROM USER_ACCOUNTS WHERE UPPER(USERNAME) = UPPER(:username) OR EPF_NUMBER = :epfNumber`,
       { username, epfNumber }
@@ -56,6 +58,10 @@ app.post('/api/register', async (req, res) => {
       });
     }
 
+    // Password එක Encrypt (Hash) කිරීම
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
     const insertQuery = `
       INSERT INTO USER_ACCOUNTS (FULL_NAME, EPF_NUMBER, NIC_NUMBER, DEPARTMENT, USERNAME, PASSWORD) 
       VALUES (:fullName, :epfNumber, :nicNumber, :department, :username, :password)
@@ -63,7 +69,7 @@ app.post('/api/register', async (req, res) => {
 
     await connection.execute(
       insertQuery,
-      { fullName, epfNumber, nicNumber, department, username, password },
+      { fullName, epfNumber, nicNumber, department, username, password: hashedPassword },
       { autoCommit: true }
     );
 
@@ -85,7 +91,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-// 4. LOGIN API Endpoint (EPF and Department Field Fixed)
+// 4. LOGIN API Endpoint
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   let connection;
@@ -94,31 +100,41 @@ app.post('/api/login', async (req, res) => {
     connection = await oracledb.getConnection(dbConfig);
 
     const query = `
-      SELECT FULL_NAME, EPF_NUMBER, DEPARTMENT, USERNAME 
+      SELECT FULL_NAME, EPF_NUMBER, DEPARTMENT, USERNAME, PASSWORD 
       FROM USER_ACCOUNTS 
-      WHERE UPPER(USERNAME) = UPPER(:username) AND PASSWORD = :password
+      WHERE UPPER(USERNAME) = UPPER(:username)
     `;
 
     const result = await connection.execute(
       query,
-      { username, password },
+      { username },
       { outFormat: oracledb.OUT_FORMAT_OBJECT }
     );
 
     if (result.rows && result.rows.length > 0) {
       const user = result.rows[0];
 
-      res.json({
-        success: true,
-        user: {
-          username: user.USERNAME,
-          fullName: user.FULL_NAME,
-          epfNumber: user.EPF_NUMBER,
-          epf: user.EPF_NUMBER,       // Front-end එක epf ලෙස ගත්තත් epfNumber ලෙස ගත්තත් හරියටම ලැබීමට
-          department: user.DEPARTMENT
-        },
-        message: 'Login successful!'
-      });
+      // Password සසඳා බලමු
+      const isPasswordValid = await bcrypt.compare(password, user.PASSWORD);
+
+      if (isPasswordValid) {
+        res.json({
+          success: true,
+          user: {
+            username: user.USERNAME,
+            fullName: user.FULL_NAME,
+            epfNumber: user.EPF_NUMBER,
+            epf: user.EPF_NUMBER,
+            department: user.DEPARTMENT
+          },
+          message: 'Login successful!'
+        });
+      } else {
+        res.status(401).json({ 
+          success: false, 
+          message: 'Invalid Username or Password!' 
+        });
+      }
     } else {
       res.status(401).json({ 
         success: false, 
@@ -139,7 +155,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 5. Dashboard Metrics API
+// 5. DASHBOARD METRICS API Endpoint
 app.get('/api/dashboard-metrics', (req, res) => {
   res.json({
     totalDownloads: '1,248',
@@ -147,10 +163,59 @@ app.get('/api/dashboard-metrics', (req, res) => {
     zones: [
       { title: "Central and Southern", downloads: "440", lastMonthDownloads: "352", payments: "LKR 1,800,000", themeColor: "#6366F1" },
       { title: "Northern and Eastern", downloads: "280", lastMonthDownloads: "224", payments: "LKR 950,000", themeColor: "#F59E0B" },
-      { title: "Wayamba and Western", downloads: "528", lastMonthDownloads: "422", payments: "LKR 2,100,000", themeColor: "#10B981" }
+      { title: "Wayamba and Western", downloads: "528", lastMonthDownloads: "422", payments: "LKR 1,100,000", themeColor: "#10B981" }
     ]
   });
 });
 
-const PORT = 5000;
+// 6. ACTIVITY MONITORING ANALYTICS API Endpoint (Live DB)
+app.get('/api/am-analytics', async (req, res) => {
+  let connection;
+  try {
+    connection = await oracledb.getConnection(dbConfig);
+
+    // 1. User Categories Query
+    const catResult = await connection.execute(
+      `SELECT cat_type AS "category", COUNT(cat_type) AS "count"
+       FROM SLI_APPS.am_login_users@LIVE 
+       WHERE is_default = 'N' AND is_active = 'Y' 
+       GROUP BY cat_type`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+
+    // 2. Zone-wise Users Query (Includes Miscellaneous and exact DB zones)
+    const zoneResult = await connection.execute(
+      `SELECT NVL(A3.zone_name, 'Miscellaneous') AS "zone", COUNT(A1.username) AS "userCount"
+       FROM SLI_APPS.am_login_users@LIVE A1
+       LEFT OUTER JOIN AGENT.AGENT@LIVE A2 ON TRIM(UPPER(A1.username)) = TRIM(UPPER(A2.email)) 
+       LEFT OUTER JOIN BAU.SLIC_BRANCH_LIST@LIVE A3 ON TRIM(A2.branch) = TRIM(A3.csp_code)
+       WHERE A1.is_default = 'N' AND A1.is_active = 'Y' AND A2.stcd IN (0, 1)
+       GROUP BY A3.zone_name
+       ORDER BY "userCount" DESC`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+
+    res.json({
+      success: true,
+      categories: catResult.rows || [],
+      zones: zoneResult.rows || []
+    });
+
+  } catch (err) {
+    console.error('❌ Analytics API Error:', err.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch analytics: ' + err.message 
+    });
+  } finally {
+    if (connection) {
+      try { await connection.close(); } catch (e) { console.error(e); }
+    }
+  }
+});
+
+// Server Listening
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));

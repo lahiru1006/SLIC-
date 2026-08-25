@@ -9,12 +9,13 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt', // Auto update වෙනුවට user ගෙන් අහන්න 'prompt' කළා
+      registerType: 'prompt',
       includeAssets: ['slic.png', 'favicon.ico'],
       devOptions: {
         enabled: true
       },
       manifest: {
+        id: '/',
         name: 'SLIC App',
         short_name: 'SLIC',
         description: 'SLIC Web Application',
@@ -25,12 +26,12 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
-            src: 'slic.png',
+            src: '/slic.png',
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'slic.png',
+            src: '/slic.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
